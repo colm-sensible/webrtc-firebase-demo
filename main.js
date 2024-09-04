@@ -4,7 +4,12 @@ import firebase from 'firebase/app';
 import 'firebase/firestore';
 
 const firebaseConfig = {
-  // your config
+  apiKey: "AIzaSyDA4d3hwVtD_f5HURofsvVcFrYIHxfRbQg",
+  authDomain: "fireside-47bb3.firebaseapp.com",
+  projectId: "fireside-47bb3",
+  storageBucket: "fireside-47bb3.appspot.com",
+  messagingSenderId: "536421323037",
+  appId: "1:536421323037:web:4fe1bf2635a8effdf051f4"
 };
 
 if (!firebase.apps.length) {
@@ -34,31 +39,95 @@ const callInput = document.getElementById('callInput');
 const answerButton = document.getElementById('answerButton');
 const remoteVideo = document.getElementById('remoteVideo');
 const hangupButton = document.getElementById('hangupButton');
+const muteAudioButton = document.getElementById('muteAudioButton');
+const disableVideoButton = document.getElementById('disableVideoButton');
+const cameraSelect = document.getElementById('cameraSelect');
 
-// 1. Setup media sources
+// Global state for tracking mute and video states
+let isAudioMuted = false;
+let isVideoDisabled = false;
 
-webcamButton.onclick = async () => {
-  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-  remoteStream = new MediaStream();
-
-  // Push tracks from local stream to peer connection
-  localStream.getTracks().forEach((track) => {
-    pc.addTrack(track, localStream);
+// Function to populate camera options
+async function populateCameraOptions() {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const videoDevices = devices.filter(device => device.kind === 'videoinput');
+  
+  cameraSelect.innerHTML = '';
+  videoDevices.forEach(device => {
+    const option = document.createElement('option');
+    option.value = device.deviceId;
+    option.text = device.label || `Camera ${cameraSelect.length + 1}`;
+    cameraSelect.appendChild(option);
   });
+}
 
-  // Pull tracks from remote stream, add to video stream
-  pc.ontrack = (event) => {
-    event.streams[0].getTracks().forEach((track) => {
-      remoteStream.addTrack(track);
-    });
+// Function to start the webcam
+async function startWebcam() {
+  const selectedCameraId = cameraSelect.value;
+  const constraints = {
+    video: { deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined },
+    audio: true
   };
 
-  webcamVideo.srcObject = localStream;
-  remoteVideo.srcObject = remoteStream;
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia(constraints);
+    remoteStream = new MediaStream();
 
-  callButton.disabled = false;
-  answerButton.disabled = false;
+    // Push tracks from local stream to peer connection
+    localStream.getTracks().forEach((track) => {
+      pc.addTrack(track, localStream);
+    });
+
+    // Pull tracks from remote stream, add to video stream
+    pc.ontrack = (event) => {
+      event.streams[0].getTracks().forEach((track) => {
+        remoteStream.addTrack(track);
+      });
+    };
+
+    webcamVideo.srcObject = localStream;
+    remoteVideo.srcObject = remoteStream;
+
+    callButton.disabled = false;
+    answerButton.disabled = false;
+    muteAudioButton.disabled = false;
+    disableVideoButton.disabled = false;
+  } catch (error) {
+    console.error('Error accessing media devices.', error);
+  }
+}
+
+// 1. Setup media sources
+webcamButton.onclick = async () => {
+  await populateCameraOptions();
+  await startWebcam();
   webcamButton.disabled = true;
+};
+
+// Add camera switch functionality
+cameraSelect.onchange = async () => {
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+  }
+  await startWebcam();
+};
+
+// Add mute audio functionality
+muteAudioButton.onclick = () => {
+  isAudioMuted = !isAudioMuted;
+  localStream.getAudioTracks().forEach(track => {
+    track.enabled = !isAudioMuted;
+  });
+  muteAudioButton.textContent = isAudioMuted ? 'Unmute Audio' : 'Mute Audio';
+};
+
+// Add disable video functionality
+disableVideoButton.onclick = () => {
+  isVideoDisabled = !isVideoDisabled;
+  localStream.getVideoTracks().forEach(track => {
+    track.enabled = !isVideoDisabled;
+  });
+  disableVideoButton.textContent = isVideoDisabled ? 'Enable Video' : 'Disable Video';
 };
 
 // 2. Create an offer
@@ -136,11 +205,43 @@ answerButton.onclick = async () => {
 
   offerCandidates.onSnapshot((snapshot) => {
     snapshot.docChanges().forEach((change) => {
-      console.log(change);
       if (change.type === 'added') {
         let data = change.doc.data();
         pc.addIceCandidate(new RTCIceCandidate(data));
       }
     });
   });
+};
+
+// 4. Hangup call
+hangupButton.onclick = () => {
+  // Stop all tracks on the local stream
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+  }
+
+  // Close the peer connection
+  if (pc) {
+    pc.close();
+  }
+
+  // Reset UI elements
+  webcamVideo.srcObject = null;
+  remoteVideo.srcObject = null;
+  webcamButton.disabled = false;
+  callButton.disabled = true;
+  answerButton.disabled = true;
+  hangupButton.disabled = true;
+  muteAudioButton.disabled = true;
+  disableVideoButton.disabled = true;
+
+  // Reset global variables
+  localStream = null;
+  remoteStream = null;
+  isAudioMuted = false;
+  isVideoDisabled = false;
+
+  // Reset button texts
+  muteAudioButton.textContent = 'Mute Audio';
+  disableVideoButton.textContent = 'Disable Video';
 };
